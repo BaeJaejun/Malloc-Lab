@@ -73,7 +73,8 @@ team_t team = {
 
 /* 힙 리스트 시작점을 가리키는 단 하나의 전역 변수 */
 static char *heap_listp;
-
+/* next-fit에서 이전 포인터를 가리킴*/
+static char *last_bp;
 /* extend_heap 새 가용 블록으로 힙 확장하기*/
 static void *extend_heap(size_t words);
 /* 인접 가용 블록들과 통합하기*/
@@ -83,6 +84,7 @@ static void *find_fit(size_t asize);
 /* 분할 및 헤더,풋터 세팅*/
 static void place(void *bp, size_t asize);
 
+#define NEXT_FIT    /* 주석 처리하면 First-Fit, 정의하면 Next-Fit */
 
 /*
  * mm_init - initialize the malloc package.
@@ -98,7 +100,7 @@ int mm_init(void)
     PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1));// 프롤로그 푸터
     PUT(heap_listp + (3*WSIZE), PACK(0, 1));    // 에필로그 헤더
     heap_listp += (2*WSIZE); //실제 데이터 블록 시작점으로 이동
-
+    last_bp = heap_listp;
     //초기 자유 블록 확보: CHUNKSIZE 만큼 힙 확장 -> 4096/4 = 1024 워드를 요청
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
@@ -159,6 +161,8 @@ static void *coalesce(void *bp)
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
+    last_bp = bp;
+
     return bp;
 }
 /*
@@ -218,6 +222,38 @@ void *mm_malloc(size_t size)
     return bp;
 }
 
+
+#ifdef NEXT_FIT
+
+static void *find_fit(size_t asize)
+{
+    void *bp;
+    // 지난번에 할당/검색을 멈춘 블록(last_bp)이 있으면
+    // 그 블록의 다음 블록부터 검색 시작. 없으면 heap_listp부터.
+    void *start = last_bp ? NEXT_BLKP(last_bp) : heap_listp;
+
+    // 1) start → 에필로그 직전까지 검색
+    for (bp = start; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && GET_SIZE(HDRP(bp)) >= asize) {
+            last_bp = bp;  // 다음번 검색 시 이 블록 다음부터
+            return bp;
+        }
+    }
+
+    // 2) 힙 처음(heap_listp) → start 전까지 wrap-around 검색
+    for (bp = heap_listp; bp != start; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && GET_SIZE(HDRP(bp)) >= asize) {
+            last_bp = bp;
+            return bp;
+        }
+    }
+
+    // 3) 전체 탐색했는데 적합한 블록이 없으면 NULL 반환
+    return NULL;
+}
+
+#else  /* First-Fit */
+
 static void *find_fit(size_t asize)
 {
     /* first- fit */
@@ -233,6 +269,8 @@ static void *find_fit(size_t asize)
     /* No fit */
     return NULL;
 }
+
+#endif
 
 static void place(void *bp, size_t asize)
 {
